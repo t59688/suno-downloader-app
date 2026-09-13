@@ -71,27 +71,26 @@ suno-downloader-app/
 └─ suno_sample.m4a        # 验证脚本产出的真实解密音频
 ```
 
-## 开发
+## 编译与运行工作流（一键化）
 
-```bash
-npm install
+混合应用已配置完整自动化脚本，无需繁琐敲多条命令：
 
-# 1) 桌面浏览器完整体验（含解密，走 vite dev-proxy）
-npm run dev
+| 使用场景 | 一键命令 | 说明 |
+|---|---|---|
+| **一键编译并在手机/模拟器上运行** ⭐ | `npm run android` | **全自动**：前端构建 → 安卓同步 → Gradle 编译 → 推送安装启动 App |
+| **仅打包 APK 安装包** | `npm run build:apk` | 产出安装包：`android/app/build/outputs/apk/debug/app-debug.apk` |
+| **端到端解密与转码单元测试** | `npm test` | 测试真实歌曲：页面解析 → 密钥申请 → 流式解密 → MP3/WAV 校验 |
+| **电脑浏览器本地体验** | `npm run dev` | 浏览器本地调试（走内置 vite dev-proxy 代理） |
+| **打开 Android Studio 可视化工程** | `npm run cap:open` | 使用 Android Studio 调试或打 Release 签名包 |
 
-# 2) 端到端链路验证（真实歌曲：解析→密钥→下载→解密→落盘）
-npm run validate
+### 底层流水线机制
 
-# 3) Web 构建 + 同步到 Android
-npm run build
-npx cap sync android
-
-# 4) 打包 APK（需要 Android SDK + JDK 17/21）
-cd android && gradlew.bat assembleDebug
-# 产物: android/app/build/outputs/apk/debug/app-debug.apk
-
-# 5) 用 Android Studio 打开 android/ 可调试/出 release 包
-npx cap open android
+如果你需要了解底层执行了什么：
+```text
+1. 前端打包 (npm run build) ───► 产物输出到 dist/
+2. 资源同步 (npx cap sync)  ───► 拷贝到 android/app/src/main/assets/public
+3. 原生编译 (gradlew assemble) ─► 生成 app-debug.apk
+4. 部署运行 (adb install & run) ─► 自动推送到连接的手机或模拟器启动
 ```
 
 ## 已验证（2026-09-13）

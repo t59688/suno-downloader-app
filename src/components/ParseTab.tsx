@@ -26,7 +26,7 @@ import {
 import { extractId, fetchAndParse, fetchAndParsePlaylist } from '../core/sunoParser';
 import { fetchPage } from '../core/http';
 import { downloadTrack, downloadAll, type DownloadFormat, type DownloadResult } from '../core/download';
-import { isNative, nativeSave, notifyStart, notifyProgress, notifyComplete, notifyFail, notifyCancel } from '../core/native';
+import { isNative, nativeSave, notifyStart, notifyProgress, notifyComplete, notifyFail, notifyCancel, getClipboardText } from '../core/native';
 import { upsertRecord } from '../core/records';
 import AudioPlayer from './AudioPlayer';
 import { usePlayer } from './PlayerContext';
@@ -78,6 +78,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
   const [result, setResult] = useState<DownloadResult | null>(null);
   const [resultUrl, setResultUrl] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
+  const [pasteTip, setPasteTip] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const lastNotifPct = useRef(-1);
 
@@ -245,10 +246,11 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
       });
       setResult(r);
       setResultUrl(URL.createObjectURL(r.blob));
-      setPhase('done');
-      setStage('完成');
+      setStage('正在保存至系统媒体库…');
       await autoSave(r);
       await addToLibrary(r, format);
+      setPhase('done');
+      setStage('完成');
     } catch (e: any) {
       if (e?.name === 'AbortError') {
         setPhase('ready');
@@ -280,9 +282,10 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
       });
       setResult(r);
       setResultUrl(URL.createObjectURL(r.blob));
+      setStage('正在保存至系统文件库…');
+      await autoSave(r);
       setPhase('done');
       setStage('完成');
-      await autoSave(r);
     } catch (e: any) {
       if (e?.name === 'AbortError') {
         setPhase('ready');
@@ -325,10 +328,18 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
 
   async function handlePaste() {
     try {
-      const t = await navigator.clipboard.readText();
-      if (t) setInput(t.trim());
+      const t = await getClipboardText();
+      if (t) {
+        setInput(t.trim());
+        setPasteTip('已粘贴');
+        setTimeout(() => setPasteTip(''), 1500);
+      } else {
+        setPasteTip('剪贴板为空');
+        setTimeout(() => setPasteTip(''), 1800);
+      }
     } catch {
-      /* 忽略 */
+      setPasteTip('未能读取');
+      setTimeout(() => setPasteTip(''), 1800);
     }
   }
 
@@ -368,7 +379,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
         <div className="input-actions">
           <button className="btn btn-ghost" onClick={handlePaste} disabled={busy} type="button">
             <ClipboardPaste size={15} strokeWidth={1.8} />
-            粘贴
+            {pasteTip || '粘贴'}
           </button>
           <button
             className="btn btn-primary"
@@ -523,10 +534,16 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
           </div>
 
           <div className="result-actions">
-            {(!isNative || !savedMsg.includes('已保存到')) && (
+            {!isNative && (
               <button className="btn btn-primary full" onClick={handleSave} type="button">
                 <HardDriveDownload size={16} strokeWidth={2} />
-                保存到设备
+                保存到电脑 / 手机
+              </button>
+            )}
+            {isNative && savedMsg.includes('失败') && (
+              <button className="btn btn-danger full" onClick={handleSave} type="button">
+                <HardDriveDownload size={16} strokeWidth={2} />
+                重试保存到设备
               </button>
             )}
             {savedMsg && <div className="saved-line">{savedMsg}</div>}

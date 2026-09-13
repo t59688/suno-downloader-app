@@ -26,6 +26,26 @@ export interface SunoNativePlugin {
     data: string;
     mime?: string;
   }): Promise<{ uri: string; path: string }>;
+  /** 流式保存开始：创建文件并返回 sessionId */
+  saveStreamStart(options: {
+    fileName: string;
+    mime?: string;
+  }): Promise<{ sessionId: string }>;
+  /** 流式保存写入分块数据（Base64） */
+  saveStreamChunk(options: {
+    sessionId: string;
+    chunk: string;
+  }): Promise<{ success: boolean }>;
+  /** 流式保存结束并刷新索引 */
+  saveStreamFinish(options: {
+    sessionId: string;
+  }): Promise<{ uri: string; path: string }>;
+  /** 流式保存中断/取消 */
+  saveStreamAbort(options: {
+    sessionId: string;
+  }): Promise<void>;
+  /** 读取系统剪贴板文本内容 */
+  getClipboard(): Promise<{ text: string }>;
 }
 
 /**
