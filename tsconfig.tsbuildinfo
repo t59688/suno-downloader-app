@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.d.ts","./src/components/audioplayer.tsx","./src/core/decrypt.ts","./src/core/download.ts","./src/core/http.ts","./src/core/id3.ts","./src/core/native.ts","./src/core/sunoparser.ts","./src/core/transcode.ts","./src/core/types.ts","./plugins/suno-native/src/index.ts","./plugins/suno-native/src/plugin.ts"],"version":"5.9.3"}

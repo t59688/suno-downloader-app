@@ -1,0 +1,12 @@
+{
+  "name": "suno-native",
+  "version": "1.0.0",
+  "description": "Suno 下载器原生插件：绕过 Origin 限制请求 proxy / rights 接口",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  }
+}
