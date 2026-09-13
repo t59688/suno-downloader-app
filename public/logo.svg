@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <defs>
+    <!-- 背景黑曜石渐变 -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#191D28"/>
+      <stop offset="50%" stop-color="#11131B"/>
+      <stop offset="100%" stop-color="#08090D"/>
+    </linearGradient>
+
+    <!-- 顶部柔光 -->
+    <linearGradient id="topGlow" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- 太阳声波珊瑚日落渐变 -->
+    <linearGradient id="coralSun" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFB03A"/>
+      <stop offset="50%" stop-color="#FF6B35"/>
+      <stop offset="100%" stop-color="#FF3838"/>
+    </linearGradient>
+
+    <!-- 能量柱渐变 -->
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFC04D"/>
+      <stop offset="100%" stop-color="#FF4D30"/>
+    </linearGradient>
+
+    <!-- 托盘底座渐变 -->
+    <linearGradient id="dockGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF3838"/>
+      <stop offset="50%" stop-color="#FF7B39"/>
+      <stop offset="100%" stop-color="#FFB03A"/>
+    </linearGradient>
+
+    <!-- 柔和辉光滤镜 -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- 1. 背景层 -->
+  <rect width="108" height="108" rx="26" fill="url(#bg)"/>
+
+  <!-- 顶部质感柔光 -->
+  <path d="M0,0 H108 V50 C72,62 36,62 0,50 Z" fill="url(#topGlow)"/>
+
+  <!-- 同心黑胶声学环 -->
+  <circle cx="54" cy="54" r="41" fill="none" stroke="#FFFFFF" stroke-opacity="0.04" stroke-width="1.2" stroke-dasharray="3 3"/>
+  <circle cx="54" cy="54" r="33" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" stroke-width="1"/>
+
+  <!-- 2. 前景层（安全区内） -->
+  <g filter="url(#glow)">
+    <!-- 托盘底座（落盘象征） -->
+    <path d="M 37 72 C 45 74.5, 63 74.5, 71 72" 
+          fill="none" 
+          stroke="url(#dockGrad)" 
+          stroke-width="3.8" 
+          stroke-linecap="round"/>
+
+    <!-- 声学柱阵列（AI 音律天际线） -->
+    <!-- 外左 -->
+    <line x1="36.5" y1="43" x2="36.5" y2="52" stroke="url(#barGrad)" stroke-width="3.6" stroke-linecap="round"/>
+    <!-- 次左 -->
+    <line x1="44.5" y1="36" x2="44.5" y2="52" stroke="url(#barGrad)" stroke-width="3.6" stroke-linecap="round"/>
+    <!-- 次右 -->
+    <line x1="63.5" y1="36" x2="63.5" y2="52" stroke="url(#barGrad)" stroke-width="3.6" stroke-linecap="round"/>
+    <!-- 外右 -->
+    <line x1="71.5" y1="43" x2="71.5" y2="52" stroke="url(#barGrad)" stroke-width="3.6" stroke-linecap="round"/>
+
+    <!-- 中央贯穿下载箭身与主频峰 -->
+    <line x1="54" y1="30" x2="54" y2="58" stroke="url(#barGrad)" stroke-width="3.8" stroke-linecap="round"/>
+
+    <!-- 下载聚能箭头 -->
+    <polyline points="43,56 54,67 65,56" 
+              fill="none" 
+              stroke="url(#coralSun)" 
+              stroke-width="3.8" 
+              stroke-linecap="round" 
+              stroke-linejoin="round"/>
+  </g>
+</svg>

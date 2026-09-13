@@ -49,7 +49,7 @@ function Shell() {
       {tab !== 'player' && (
         <header className="brand">
           <div className="brand-mark">
-            <Disc3 size={22} strokeWidth={2.2} />
+            <img src="/logo.svg" alt="Suno" width={26} height={26} style={{ borderRadius: 6, display: 'block' }} />
           </div>
           <div>
             <div className="brand-name">Suno Downloader</div>
