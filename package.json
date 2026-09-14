@@ -10,9 +10,10 @@
     "preview": "vite preview",
     "validate": "node scripts/validate.mjs",
     "test": "node scripts/test_song_e2e.mjs",
+    "test:lrc": "node scripts/test_lrc.mjs",
     "android": "node scripts/run_app.mjs",
-    "build:apk": "npm run build && cap sync android && cd android && gradlew assembleDebug",
-    "cap:sync": "cap sync android",
+    "build:apk": "node scripts/build_apk.mjs",
+    "cap:sync": "cap sync android && node scripts/install_suno_auth_native.mjs",
     "cap:open": "cap open android"
   },
   "dependencies": {
