@@ -108,6 +108,9 @@ jobs:
       - name: Sync Capacitor and install native bridges
         run: npm run cap:sync
 
+      - name: Verify immersive shell and launcher branding
+        run: node scripts/verify_android_shell.mjs
+
       - name: Stamp Android version from package.json
         run: |
           node --input-type=module <<'NODE'
