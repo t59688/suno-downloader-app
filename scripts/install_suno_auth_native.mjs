@@ -4,31 +4,46 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
-const packageDir = path.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'sunoapp', 'downloader');
+const androidMain = path.join(root, 'android', 'app', 'src', 'main');
+const packageDir = path.join(androidMain, 'java', 'com', 'sunoapp', 'downloader');
 const mainActivityPath = path.join(packageDir, 'MainActivity.java');
-const sourcePath = path.join(root, 'native', 'suno-auth', 'SunoAuthNativePlugin.java');
-const targetDir = path.join(packageDir, 'auth');
-const targetPath = path.join(targetDir, 'SunoAuthNativePlugin.java');
+const manifestPath = path.join(androidMain, 'AndroidManifest.xml');
+
+const plugins = [
+  {
+    label: 'Suno 核心原生桥',
+    source: path.join(root, 'native', 'suno-core', 'SunoNativePlugin.java'),
+    target: path.join(packageDir, 'core', 'SunoNativePlugin.java'),
+    importLine: 'import com.sunoapp.downloader.core.SunoNativePlugin;',
+    registerLine: 'registerPlugin(SunoNativePlugin.class);',
+  },
+  {
+    label: 'Suno 一键登录原生桥',
+    source: path.join(root, 'native', 'suno-auth', 'SunoAuthNativePlugin.java'),
+    target: path.join(packageDir, 'auth', 'SunoAuthNativePlugin.java'),
+    importLine: 'import com.sunoapp.downloader.auth.SunoAuthNativePlugin;',
+    registerLine: 'registerPlugin(SunoAuthNativePlugin.class);',
+  },
+];
 
 function fail(message) {
-  throw new Error('[suno-auth-native] ' + message);
+  throw new Error('[suno-native] ' + message);
 }
 
-if (!existsSync(sourcePath)) fail('原生登录桥源码缺失: ' + sourcePath);
 if (!existsSync(mainActivityPath)) {
   fail('未找到 Android MainActivity。请先运行 npx cap add android / npx cap sync android');
 }
-
-mkdirSync(targetDir, { recursive: true });
-copyFileSync(sourcePath, targetPath);
+if (!existsSync(manifestPath)) fail('未找到 AndroidManifest.xml');
+for (const plugin of plugins) {
+  if (!existsSync(plugin.source)) fail(`${plugin.label}源码缺失: ${plugin.source}`);
+  mkdirSync(path.dirname(plugin.target), { recursive: true });
+  copyFileSync(plugin.source, plugin.target);
+}
 
 let source = readFileSync(mainActivityPath, 'utf8').replace(/\r\n?/g, '\n');
 if (!/package\s+com\.sunoapp\.downloader\s*;/.test(source)) {
   fail('MainActivity package 与 com.sunoapp.downloader 不匹配，拒绝自动改写');
 }
-
-const bundleImport = 'import android.os.Bundle;';
-const pluginImport = 'import com.sunoapp.downloader.auth.SunoAuthNativePlugin;';
 
 function addImport(text, importLine) {
   if (text.includes(importLine)) return text;
@@ -38,24 +53,43 @@ function addImport(text, importLine) {
   return text.slice(0, at) + '\n' + importLine + '\n' + text.slice(at);
 }
 
-source = addImport(source, bundleImport);
-source = addImport(source, pluginImport);
+source = addImport(source, 'import android.os.Bundle;');
+for (const plugin of plugins) source = addImport(source, plugin.importLine);
 
-const registerLine = 'registerPlugin(SunoAuthNativePlugin.class);';
-if (!source.includes(registerLine)) {
+const missingRegistrations = plugins
+  .map((plugin) => plugin.registerLine)
+  .filter((line) => !source.includes(line));
+
+if (missingRegistrations.length) {
+  const registrationBlock = missingRegistrations.join('\n        ');
   const superCall = /super\.onCreate\s*\(\s*savedInstanceState\s*\)\s*;/;
   if (superCall.test(source)) {
-    source = source.replace(superCall, registerLine + '\n        super.onCreate(savedInstanceState);');
+    source = source.replace(superCall, (match) => registrationBlock + '\n        ' + match);
   } else {
     const classOpen = /(public\s+class\s+MainActivity\s+extends\s+BridgeActivity\s*\{)/;
     if (!classOpen.test(source)) fail('无法识别 MainActivity 结构，拒绝自动改写');
     source = source.replace(
       classOpen,
-      `$1\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        ${registerLine}\n        super.onCreate(savedInstanceState);\n    }`,
+      `$1\n    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        ${registrationBlock}\n        super.onCreate(savedInstanceState);\n    }`,
     );
   }
 }
 
 writeFileSync(mainActivityPath, source.endsWith('\n') ? source : source + '\n', 'utf8');
-console.log('✅ Suno 一键登录原生桥已安装并注册');
-console.log('   ' + path.relative(root, targetPath));
+
+let manifest = readFileSync(manifestPath, 'utf8').replace(/\r\n?/g, '\n');
+const permissions = [
+  '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
+  '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+];
+for (const permission of permissions) {
+  const name = permission.match(/android:name="([^"]+)"/)?.[1];
+  if (!name || manifest.includes(`android:name="${name}"`)) continue;
+  const appIndex = manifest.indexOf('<application');
+  if (appIndex < 0) fail('无法定位 AndroidManifest.xml 的 <application>');
+  manifest = manifest.slice(0, appIndex) + permission + '\n    ' + manifest.slice(appIndex);
+}
+writeFileSync(manifestPath, manifest.endsWith('\n') ? manifest : manifest + '\n', 'utf8');
+
+console.log('✅ Suno 原生桥已安装并注册');
+for (const plugin of plugins) console.log('   ' + path.relative(root, plugin.target));
