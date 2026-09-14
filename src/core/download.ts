@@ -1,14 +1,15 @@
 /**
  * 下载流水线：解析 → 密钥 → 解密 → (转码 → 打标签) → 文件
  */
-import { fetchRights } from './http';
+import { fetchAlignedLyrics, fetchRights, supportsOneTapLrc } from './http';
 import { decryptAudio } from './decrypt';
 import { blobToAudioBuffer, audioBufferToMp3, audioBufferToWav } from './transcode';
 import { attachMp3Tags, type TagInfo } from './id3';
+import { buildStandardLrc } from './lrc';
 import { zipSync } from 'fflate';
 import type { ClipInfo } from './types';
 
-export type DownloadFormat = 'mp3' | 'wav' | 'original' | 'mp4' | 'cover' | 'lyrics';
+export type DownloadFormat = 'mp3' | 'wav' | 'original' | 'mp4' | 'cover' | 'lyrics' | 'lrc';
 
 export interface DownloadOptions {
   onStage?: (stage: string) => void;
@@ -111,6 +112,25 @@ export async function downloadTrack(
       return { blob, fileName: name + '_lyrics.txt', mimeType: 'text/plain' };
     }
 
+    case 'lrc': {
+      if (!supportsOneTapLrc()) throw new Error('精准 LRC 的一键登录仅支持 Android App');
+      opts.onStage?.('正在获取 Suno 精准时间轴…');
+      const payload = await fetchAlignedLyrics(clip.id, {
+        signal: opts.signal,
+        onRetry: (attempt, maxAttempts) => {
+          opts.onStage?.(`Suno 正在生成同步歌词，重试 ${attempt}/${maxAttempts}…`);
+        },
+      });
+      opts.onStage?.('生成标准 LRC…');
+      const text = buildStandardLrc(payload, {
+        title: clip.title,
+        artist: clip.display_name || clip.handle || 'Suno AI',
+      });
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      opts.onProgress?.(100);
+      return { blob, fileName: name + '.lrc', mimeType: 'text/plain' };
+    }
+
     case 'wav': {
       const o = await getOriginalAudio(clip, opts);
       opts.onStage?.('正在转换为 WAV…');
@@ -140,8 +160,6 @@ export async function downloadTrack(
         artist: clip.display_name || clip.handle || 'Suno AI',
         album: clip.title,
         tags: meta.tags ? String(meta.tags) : '',
-        // 参考站点同款：Suno 公开页不暴露独立歌词字段，
-        // 歌词取自 metadata.prompt（[Instrumental] 会被 cleanLyrics 过滤）
         lyrics: String(meta.prompt ?? meta.lyrics ?? ''),
         cover: clip.image_url || '',
       };
@@ -152,33 +170,42 @@ export async function downloadTrack(
 }
 
 /**
- * 打包全部可用文件为 ZIP（与参考站点一致）：
- * MP3 + WAV + 原始音频 + 封面 + 歌词.txt + MP4 视频（如有）
+ * 打包全部可用文件为 ZIP。
+ * Android App 会先取 LRC：若首次使用需要登录，用户立即完成登录，不会等其它大文件生成完才弹窗。
  */
 export async function downloadAll(clip: ClipInfo, opts: DownloadOptions = {}): Promise<DownloadResult> {
   const name = safeName(clip.title || clip.id);
   const files: Record<string, Uint8Array> = {};
+  const formats: Array<{ format: DownloadFormat; label: string }> = [
+    { format: 'mp3', label: '生成 MP3' },
+    { format: 'wav', label: '生成 WAV' },
+    { format: 'original', label: '解密原始音频' },
+    { format: 'cover', label: '下载封面' },
+    { format: 'lyrics', label: '生成 TXT 歌词' },
+  ];
+  if (supportsOneTapLrc()) formats.unshift({ format: 'lrc', label: '生成标准 LRC' });
 
   const collect = async (format: DownloadFormat, stage: string) => {
     try {
       opts.onStage?.(stage);
       const r = await downloadTrack(clip, format, {
         signal: opts.signal,
-        onStage: (s) => opts.onStage?.(stage + ' ' + s),
+        onStage: (s) => opts.onStage?.(stage + ' · ' + s),
       });
       files[r.fileName] = new Uint8Array(await r.blob.arrayBuffer());
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') throw e;
-      // 单项失败（如没有视频）不影响整体打包
+      if (format === 'lrc') throw e;
+      // 其它单项沿用原有“尽可能打包”策略，例如无视频/封面源不阻断 ZIP。
     }
     await tick();
   };
 
-  await collect('mp3', '[1/5] 生成 MP3…');
-  await collect('wav', '[2/5] 生成 WAV…');
-  await collect('original', '[3/5] 解密原始音频…');
-  await collect('cover', '[4/5] 下载封面…');
-  await collect('lyrics', '[5/5] 生成歌词…');
+  for (let i = 0; i < formats.length; i++) {
+    const item = formats[i];
+    await collect(item.format, `[${i + 1}/${formats.length}] ${item.label}…`);
+  }
+
   if (clip.video_url) {
     opts.onStage?.('下载 MP4 视频…');
     try {

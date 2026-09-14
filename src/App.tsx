@@ -70,7 +70,7 @@ function Shell() {
           <HistoryTab onRedownload={handleRedownload} />
         </div>
 
-        <footer className="foot">无需登录 · 数据直接取自 Suno 公开页面</footer>
+        <footer className="foot">公开资源免登录 · 精准 LRC 首次使用自动打开 Suno 登录</footer>
       </main>
 
       <nav className="tabbar">

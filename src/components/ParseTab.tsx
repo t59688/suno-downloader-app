@@ -3,7 +3,7 @@
  *  - 解析成功后自动写入「历史」记录
  *  - 音频下载完成后自动加入「播放器」曲库
  *  - 支持从「历史」页发起的再下载（pendingRedownload）
- *  - 全面集成 Lucide 规范图标与 Bento 格式网格
+ *  - 精准 LRC：Android 首次点击自动打开 Suno 登录，成功后自动继续；无 Token 输入步骤
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -52,7 +52,8 @@ const FORMATS: { key: DownloadFormat; label: string; desc: string }[] = [
   { key: 'original', label: '原始音频', desc: '解密原生文件' },
   { key: 'mp4', label: 'MP4', desc: '高画质 MV 视频' },
   { key: 'cover', label: '高清封面', desc: '原图无损尺寸' },
-  { key: 'lyrics', label: '歌词', desc: '纯文本 / LRC' },
+  { key: 'lyrics', label: 'TXT 歌词', desc: '公开页纯文本歌词' },
+  { key: 'lrc', label: 'LRC', desc: '首次自动登录 · 之后一键下载' },
 ];
 
 const AUDIO_FORMATS: DownloadFormat[] = ['mp3', 'wav', 'original'];
@@ -64,6 +65,7 @@ const FormatIcons: Record<DownloadFormat | 'zip', ReactNode> = {
   mp4: <Video size={17} strokeWidth={1.9} />,
   cover: <ImageIcon size={17} strokeWidth={1.9} />,
   lyrics: <FileText size={17} strokeWidth={1.9} />,
+  lrc: <FileText size={17} strokeWidth={1.9} />,
   zip: <Archive size={18} strokeWidth={1.9} />,
 };
 
@@ -440,7 +442,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
                 key={f.key}
                 className="format-btn"
                 onClick={() => handleDownload(f.key)}
-                disabled={busy || (f.key === 'mp4' && !clip.video_url)}
+                disabled={busy || (f.key === 'mp4' && !clip.video_url) || (f.key === 'lrc' && !isNative)}
                 type="button"
               >
                 <div className="format-header">
@@ -451,11 +453,21 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
                 </div>
                 <div className="format-label">{f.label}</div>
                 <div className="format-desc">
-                  {f.key === 'mp4' && !clip.video_url ? '无视频源' : f.desc}
+                  {f.key === 'mp4' && !clip.video_url
+                    ? '无视频源'
+                    : f.key === 'lrc' && !isNative
+                      ? '请在 Android App 中使用'
+                      : f.desc}
                 </div>
               </button>
             ))}
           </div>
+
+          {isNative && (
+            <div className="saved-line" style={{ marginBottom: 10 }}>
+              精准 LRC 首次使用会自动打开 Suno 登录；登录成功后自动继续，以后无需复制任何 Token。
+            </div>
+          )}
 
           <button className="btn all-btn full" onClick={handleAll} disabled={busy} type="button">
             {FormatIcons.zip}

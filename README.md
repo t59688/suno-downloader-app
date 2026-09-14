@@ -1,112 +1,209 @@
 # Suno 下载器（Capacitor + React + 原生插件）
 
-粘贴 Suno 歌曲 / Hook / 歌单链接 → 下载 **MP3 (320k, 含 ID3 标签) / WAV / 原始音频 / MP4 视频 / 封面图**。
-无需登录 Suno，纯本地解密，App 不经过任何自建服务器。
+粘贴 Suno 歌曲 / Hook / 歌单链接 → 下载 **MP3 (320k, 含 ID3 标签) / WAV / 原始音频 / MP4 视频 / 封面图 / TXT 歌词 / 标准 LRC**。
+
+公开资源仍保持免登录。Android App 的 **精准 LRC** 不要求用户复制 Cookie、Token 或 Bearer：第一次点击 LRC 时，如果 App 内还没有有效 Suno 会话，会自动打开 Suno 登录页；登录成功后自动关闭并继续下载。之后只要会话仍有效，点击 LRC 就直接生成文件。
+
+## 精准 LRC：一键体验
+
+用户侧流程只有：
+
+```text
+粘贴 Suno 链接
+  ↓
+解析歌曲
+  ↓
+点「LRC」
+  ├─ 已有有效 Suno 会话 → 直接下载
+  └─ 首次/会话失效 → 自动打开 Suno 登录页
+                         ↓
+                       正常登录
+                         ↓
+                     自动关闭登录页
+                         ↓
+                     自动继续下载 LRC
+```
+
+**不需要：**
+
+- 打开开发者工具
+- 查 Cookie
+- 查 `__session`
+- 复制 Bearer Token
+- 把凭据粘贴进 App
+
+Android 的应用沙箱不能也不应该偷读 Chrome 的登录 Cookie，因此第一次使用精准 LRC 时，如果 App 自己还没有 Suno 会话，仍需在自动弹出的 Suno 页面完成一次正常登录。这个登录会话由 Android WebView Cookie 容器持有；React/JavaScript 不读取、不展示、不持久化 Token。
+
+标准 LRC 不使用“按时长均分歌词”的伪时间轴，而是读取 Suno Web 当前使用的：
+
+```text
+GET /api/gen/<song-id>/aligned_lyrics/v2/
+```
+
+使用 `aligned_lyrics[].start_s` 与 `text` 生成标准逐行格式：
+
+```text
+[ti:歌曲名]
+[ar:作者]
+[by:Suno Downloader]
+
+[00:12.35]第一句歌词
+[00:16.82]第二句歌词
+```
+
+`aligned_lyrics/v2` 属于 Suno Web 内部接口，不是承诺长期稳定的公共 API；若 Suno 调整鉴权或响应结构，需要相应适配。
+
+## 安全边界
+
+精准 LRC 的会话凭据只存在于 Android 原生层：
+
+```text
+React / WebView UI
+  │  只传 song UUID
+  ▼
+SunoAuthNativePlugin
+  │
+  ├─ Android CookieManager 保存 Suno 登录会话
+  ├─ 必要时打开 suno.com 登录页
+  └─ 原生层直连固定 Suno API 域名
+        ↓
+https://studio-api.prod.suno.com/api/gen/<uuid>/aligned_lyrics/v2/
+        ↓
+只把歌词 JSON 返回 React
+```
+
+因此：
+
+- Token 不进入 React state
+- Token 不进入 `localStorage` / IndexedDB / 下载历史
+- Token 不写日志
+- Token 不发送给 aibiei
+- JavaScript 不获得 Token
+- 原生请求目标固定为 Suno API，不提供任意 URL 转发
 
 ## 工作原理
 
-```
+```text
 粘贴链接
-  │  extractId: 歌曲UUID / s:短码 / hook UUID / 歌单
+  │  extractId: 歌曲 UUID / s:短码 / hook UUID / 歌单
   ▼
 抓 suno.com 页面 ──────────────── 原生插件 OkHttp（不带 Origin）
   │  GET https://sunoapi.aibiei.com/proxy?url=...
-  │  解析页面内嵌的 Next.js RSC flight 数据 → 标题/封面/标签/歌词
+  │  解析页面内嵌的 Next.js RSC flight 数据 → 标题/封面/标签/TXT歌词
   ▼
-申请解密密钥 ──────────────────── 原生插件 OkHttp（伪装 Origin: https://usesuno.com）
+申请解密密钥 ──────────────────── 原生插件 OkHttp（Origin: https://usesuno.com）
   │  POST https://yellow-salad.aibiei.com/rights
   │  → { key, iv, glt }
   ▼
-下载加密音频（JS 直接 fetch，CloudFront 允许任意跨域）
-  │  GET https://d2lwuy8qc234o3.cloudfront.net/1/clip/<uuid>.m4a
+下载加密音频
   ▼
-App 内解密（@noble/ciphers 纯 JS）
+App 内解密（@noble/ciphers）
   │  userKey    = SHA-256(glt)
-  │  contentKey = AES-GCM 解包(key),  AAD = uuid
-  │  contentIv  = AES-GCM 解包(iv),   AAD = uuid
-  │  音频       = AES-CTR 流式解密（可报进度）
+  │  contentKey = AES-GCM 解包(key), AAD = uuid
+  │  contentIv  = AES-GCM 解包(iv),  AAD = uuid
+  │  音频       = AES-CTR 流式解密
   ▼
 转码 / 打标签
-     MP3: AudioContext 解码 → lamejs 320kbps → browser-id3-writer 写标签
+     MP3: AudioContext → lamejs 320kbps → browser-id3-writer
      WAV: PCM16
      原始: 按魔数识别 webm/m4a/mp3
 ```
 
-## 为什么需要原生代码（仅 Android 端 ~100 行 Java）
+精准 LRC 是独立链路，不经过 aibiei：
 
-浏览器规范**禁止 JS 设置 `Origin` 请求头**，而：
+```text
+Android App 内 Suno 会话
+  ↓
+aligned_lyrics/v2
+  ↓
+aligned_lyrics[].start_s + text
+  ↓
+标准 [mm:ss.xx] LRC
+```
 
-| 接口 | 行为（已实测） |
-|---|---|
-| `sunoapi.aibiei.com/proxy` | 带外部 Origin → **403**；不带 Origin → 200 |
-| `yellow-salad.aibiei.com/rights` | 只放行 `Origin: https://usesuno.com` |
+## 原生登录桥如何接入
 
-所以这两个请求由 `plugins/suno-native`（OkHttp）发出：
-- `pageGet`：不带 Origin
-- `rightsPost`：带 `Origin: https://usesuno.com`
+仓库的根 `android/` 是 Capacitor 生成工程并被 `.gitignore` 排除。因此精准 LRC 的 Android 原生源码保存在：
 
-桌面浏览器调试时，`vite.config.ts` 内置 `/dev-proxy` 中间件在服务端代发同样请求，
-因此 **`npm run dev` 在 Chrome 里也能完整体验整个流程**。
+```text
+native/suno-auth/SunoAuthNativePlugin.java
+```
+
+每次：
+
+```bash
+npm run cap:sync
+```
+
+都会先执行正常 `cap sync android`，再由：
+
+```text
+scripts/install_suno_auth_native.mjs
+```
+
+把原生桥复制到生成的 Android app module，并以 Capacitor 官方自定义插件方式在 `MainActivity` 中注册。安装脚本是幂等的：重复执行不会重复插入 import 或 `registerPlugin(...)`。
+
+这样不需要新增 npm 原生依赖，也不会产生无关 lockfile 变更。
 
 ## 目录结构
 
-```
+```text
 suno-downloader-app/
 ├─ src/
 │  ├─ core/
-│  │  ├─ sunoParser.ts    # 链接提取 + RSC flight 解析（歌曲/歌单/hook）
-│  │  ├─ decrypt.ts       # AES-GCM 解包 + AES-CTR 流式解密
-│  │  ├─ http.ts          # 路由：原生平台→插件 / 浏览器→dev-proxy
-│  │  ├─ transcode.ts     # AudioContext → lamejs MP3 / WAV
-│  │  ├─ id3.ts           # ID3 标签（标题/艺术家/歌词/封面）
-│  │  ├─ download.ts      # 下载流水线
+│  │  ├─ sunoParser.ts
+│  │  ├─ decrypt.ts
+│  │  ├─ http.ts          # 页面/rights + 一键 LRC 原生桥调用
+│  │  ├─ lrc.ts           # aligned_lyrics → 标准逐行 LRC
+│  │  ├─ transcode.ts
+│  │  ├─ id3.ts
+│  │  ├─ download.ts
 │  │  └─ types.ts
-│  ├─ App.tsx             # 单页 UI
+│  ├─ components/
+│  │  └─ ParseTab.tsx
+│  ├─ App.tsx
 │  └─ main.tsx
-├─ plugins/suno-native/   # 本地 Capacitor 插件
-│  ├─ src/plugin.ts       # registerPlugin('SunoNative')
-│  └─ android/            # OkHttp 实现（SunoNativePlugin.java）
-├─ scripts/validate.mjs   # 端到端链路验证（Node 直接跑真实歌曲）
-├─ android/               # Capacitor Android 工程（已接入 suno-native）
-└─ suno_sample.m4a        # 验证脚本产出的真实解密音频
+├─ plugins/
+│  ├─ suno-native/        # 既有 Capacitor JS 桥定义
+│  └─ suno-auth-native/
+│     └─ src/             # 一键 Suno 登录 JS 桥定义
+├─ native/
+│  └─ suno-auth/
+│     └─ SunoAuthNativePlugin.java
+├─ scripts/
+│  ├─ install_suno_auth_native.mjs
+│  ├─ build_apk.mjs
+│  ├─ run_app.mjs
+│  ├─ test_lrc.mjs
+│  └─ validate.mjs
+└─ android/               # Capacitor 生成工程，不入 Git
 ```
 
-## 编译与运行工作流（一键化）
+## 编译与运行
 
-混合应用已配置完整自动化脚本，无需繁琐敲多条命令：
-
-| 使用场景 | 一键命令 | 说明 |
+| 使用场景 | 命令 | 说明 |
 |---|---|---|
-| **一键编译并在手机/模拟器上运行** ⭐ | `npm run android` | **全自动**：前端构建 → 安卓同步 → Gradle 编译 → 推送安装启动 App |
-| **仅打包 APK 安装包** | `npm run build:apk` | 产出安装包：`android/app/build/outputs/apk/debug/app-debug.apk` |
-| **端到端解密与转码单元测试** | `npm test` | 测试真实歌曲：页面解析 → 密钥申请 → 流式解密 → MP3/WAV 校验 |
-| **电脑浏览器本地体验** | `npm run dev` | 浏览器本地调试（走内置 vite dev-proxy 代理） |
-| **打开 Android Studio 可视化工程** | `npm run cap:open` | 使用 Android Studio 调试或打 Release 签名包 |
+| 一键编译并安装运行 | `npm run android` | Web 构建 → Capacitor 同步 → 安装原生登录桥 → Gradle → adb 安装启动 |
+| 只构建 APK | `npm run build:apk` | 同上，但不执行 adb 安装 |
+| 同步 Android | `npm run cap:sync` | `cap sync android` 后自动安装/注册原生登录桥 |
+| LRC 纯逻辑测试 | `npm run test:lrc` | 时间戳、排序、标签清理、异常输入 |
+| 原有端到端音频测试 | `npm test` | 页面解析 → rights → 解密 → MP3/WAV 校验 |
+| 桌面浏览器调试 | `npm run dev` | 公开资源可调试；精准 LRC 一键登录只在 Android App 开启 |
 
-### 底层流水线机制
+## 精准 LRC 行为约束
 
-如果你需要了解底层执行了什么：
-```text
-1. 前端打包 (npm run build) ───► 产物输出到 dist/
-2. 资源同步 (npx cap sync)  ───► 拷贝到 android/app/src/main/assets/public
-3. 原生编译 (gradlew assemble) ─► 生成 app-debug.apk
-4. 部署运行 (adb install & run) ─► 自动推送到连接的手机或模拟器启动
-```
-
-## 已验证（2026-09-13）
-
-- ✅ 短链 `suno.com/s/kuuNnXWLBeiaN1wU` 解析：歌曲《Hello!》(Tony)
-- ✅ rights 密钥获取（Origin 伪装）
-- ✅ 1.05MB 加密音频 → AES-CTR 解密 → 合法 `ftyp` m4a（suno_sample.m4a）
-- ✅ `npm run build`（tsc + vite）
-- ✅ `gradlew assembleDebug` → app-debug.apk (4.45MB)
+- LRC 按钮在 Android App 中始终可点击，不出现 Token 输入框。
+- 首次使用或会话过期时自动弹登录。
+- 登录成功后自动继续原来的 LRC 请求，无需再点第二次。
+- 取消登录会取消当前 LRC 请求。
+- 同一时刻只允许一个登录/LRC 原生请求，避免重复弹窗和竞态。
+- 登录页面最长等待 3 分钟，超时明确失败。
+- ZIP 在 Android 中也会包含 LRC，并把 LRC 放在前面处理，以便首次登录立即发生，而不是等 MP3/WAV 转码结束后才弹登录。
+- 若 Suno 尚未生成同步歌词，会有限次数重试，不会伪造时间轴。
 
 ## 风险与注意
 
-1. **第三方依赖**：proxy / rights 都是 aibiei.com 的服务，随时可能加鉴权或收费。
-   长期方案是自建后端（抓 Suno 官方 rights 接口），App 端解密逻辑不变。
-2. **Suno 可能改加密方案**：解密参数集中在 `decrypt.ts`，改动可控。
-3. **上架审核**：App Store 3.1.1 对"下载第三方内容"有要求，需声明仅下载公开/自有内容。
-4. MP3 转码在 JS 线程执行，长歌曲会占 CPU 30s~2min（与官网实现相同）。
-   后续可换成原生 ffmpeg（mobile-ffmpeg / ffmpeg-kit）提升速度。
-5. 歌单目前展示第 1 首，可后续扩展为列表批量下载。
+1. `aligned_lyrics/v2` 是 Suno Web 内部接口，未来可能变化。
+2. 某些第三方身份提供商可能限制嵌入式 WebView 登录；普通 Suno 登录页面仍会完整呈现，实际支持情况取决于 Suno 当时的登录策略。
+3. 原有音频下载仍依赖 aibiei 的 proxy / rights 服务；精准 LRC 不依赖这两个服务。
+4. 仅下载你有权访问和保存的内容。
