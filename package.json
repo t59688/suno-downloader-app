@@ -1,7 +1,7 @@
 {
   "name": "suno-downloader-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.2",
   "type": "module",
   "description": "Suno 歌曲下载器 - Capacitor + React + 原生插件",
   "scripts": {

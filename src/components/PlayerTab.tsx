@@ -1,9 +1,8 @@
 /**
  * 播放器 Tab：只播放本应用解析/下载入库的歌曲
- * 旋转黑胶唱片 · 苹果声学细滑轨 · 0.5x–3x 倍速 · 随机 · 循环 · 灵动 EQ
- * 全面集成 Lucide 规范图标体系
+ * 旋转黑胶唱片 · 声学细滑轨 · 0.5x–3x 倍速 · 随机 · 循环 · 灵动 EQ
  */
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Disc3,
   Shuffle,
@@ -18,8 +17,11 @@ import {
   Music,
 } from 'lucide-react';
 import { usePlayer } from './PlayerContext';
+import ConfirmDialog from './ConfirmDialog';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+
+type ConfirmAction = { kind: 'clear' } | { kind: 'remove'; id: string; title: string } | null;
 
 function fmtTime(t: number): string {
   if (!isFinite(t) || t < 0) return '0:00';
@@ -39,6 +41,7 @@ export default function PlayerTab() {
   const barRef = useRef<HTMLDivElement>(null);
   const [seeking, setSeeking] = useState(false);
   const [speedOpen, setSpeedOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
 
   const { current, playing, loading, time, duration, speed, loop, shuffle, tracks } = p;
 
@@ -55,7 +58,22 @@ export default function PlayerTab() {
     else p.setLoop('off');
   }
 
+  const closeConfirm = useCallback(() => setConfirmAction(null), []);
+
+  async function applyConfirm() {
+    if (!confirmAction) return;
+    if (confirmAction.kind === 'clear') await p.clearAll();
+    else await p.removeTrack(confirmAction.id);
+    setConfirmAction(null);
+  }
+
   const pct = duration > 0 ? (time / duration) * 100 : 0;
+  const confirmTitle = confirmAction?.kind === 'clear' ? '清空本地曲库？' : '移除这首歌曲？';
+  const confirmMessage = confirmAction?.kind === 'clear'
+    ? '本应用保存的本地曲库记录会被清空，此操作不可恢复。'
+    : confirmAction?.kind === 'remove'
+      ? `「${confirmAction.title}」将从本地曲库中移除。`
+      : '';
 
   return (
     <div className="player-tab">
@@ -190,12 +208,11 @@ export default function PlayerTab() {
         ) : (
           <div className="now-empty">
             <Disc3 size={40} strokeWidth={1.5} />
-            <p>{tracks.length ? '点击下方歌曲开始播放' : '暂无本地歌曲 · 前往「解析」页下载一首吧'}</p>
+            <p>{tracks.length ? '点击下方歌曲开始播放' : '暂无本地歌曲'}</p>
           </div>
         )}
       </section>
 
-      {/* ---- 歌曲列表 ---- */}
       {tracks.length > 0 && (
         <section className="card list-card">
           <div className="list-head">
@@ -209,9 +226,7 @@ export default function PlayerTab() {
               </button>
               <button
                 className="btn btn-quiet mini danger"
-                onClick={() => {
-                  if (window.confirm('确定清空本地曲库？此操作不可恢复。')) void p.clearAll();
-                }}
+                onClick={() => setConfirmAction({ kind: 'clear' })}
                 type="button"
               >
                 <Trash2 size={13} strokeWidth={2} />
@@ -243,10 +258,7 @@ export default function PlayerTab() {
                       </span>
                     )}
                   </button>
-                  <div
-                    className="track-meta"
-                    onClick={() => (active ? p.toggle() : p.play(t.id))}
-                  >
+                  <div className="track-meta" onClick={() => (active ? p.toggle() : p.play(t.id))}>
                     <div className="track-t">{t.title}</div>
                     <div className="track-a">
                       {t.artist} · {fmtSize(t.size)}
@@ -255,9 +267,7 @@ export default function PlayerTab() {
                   <button
                     className="track-del"
                     aria-label="删除"
-                    onClick={() => {
-                      if (window.confirm(`从曲库中移除「${t.title}」？`)) void p.removeTrack(t.id);
-                    }}
+                    onClick={() => setConfirmAction({ kind: 'remove', id: t.id, title: t.title })}
                     type="button"
                   >
                     <Trash2 size={15} strokeWidth={1.8} />
@@ -269,9 +279,17 @@ export default function PlayerTab() {
         </section>
       )}
 
-      {tracks.length === 0 && (
-        <p className="list-hint">这里展示通过本应用解析下载的音频文件，安全沙箱存储，不读取外部无关文件。</p>
-      )}
+      {tracks.length === 0 && <p className="list-hint">下载完成的音频会显示在这里。</p>}
+
+      <ConfirmDialog
+        open={confirmAction != null}
+        title={confirmTitle}
+        message={confirmMessage}
+        confirmLabel={confirmAction?.kind === 'clear' ? '清空曲库' : '移除歌曲'}
+        danger
+        onCancel={closeConfirm}
+        onConfirm={applyConfirm}
+      />
     </div>
   );
 }
