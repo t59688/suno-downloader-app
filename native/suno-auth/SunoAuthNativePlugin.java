@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -15,7 +17,6 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -162,7 +163,7 @@ public class SunoAuthNativePlugin extends Plugin {
                 if (result.status >= 200 && result.status < 300) {
                     resolveActive(result);
                 } else if (result.status == 401 || result.status == 403) {
-                    // Session is stale. Do not expose it to JS; refresh it inside the login WebView.
+                    // Session is stale. Refresh it inside the login WebView.
                     lastProbedToken = token;
                     showLogin();
                 } else {
@@ -187,6 +188,7 @@ public class SunoAuthNativePlugin extends Plugin {
         probeInFlight.set(false);
 
         Dialog dialog = new Dialog(activity);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         dialog.setCancelable(true);
         dialog.setCanceledOnTouchOutside(false);
 
@@ -198,17 +200,27 @@ public class SunoAuthNativePlugin extends Plugin {
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         int pad = dp(activity, 14);
-        bar.setPadding(pad, dp(activity, 8), pad, dp(activity, 8));
+        bar.setPadding(pad, dp(activity, 10), pad, dp(activity, 10));
+        bar.setBackgroundColor(Color.rgb(16, 18, 22));
 
         TextView title = new TextView(activity);
-        title.setText("登录 Suno · 完成后自动返回");
-        title.setTextColor(Color.WHITE);
+        title.setText("登录 Suno");
+        title.setTextColor(Color.rgb(245, 245, 247));
         title.setTextSize(16);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         bar.addView(title, titleParams);
 
-        Button cancel = new Button(activity);
+        TextView cancel = new TextView(activity);
         cancel.setText("取消");
+        cancel.setTextColor(Color.rgb(245, 245, 247));
+        cancel.setTextSize(14);
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setPadding(dp(activity, 14), dp(activity, 8), dp(activity, 14), dp(activity, 8));
+        GradientDrawable cancelBackground = new GradientDrawable();
+        cancelBackground.setColor(Color.rgb(28, 30, 36));
+        cancelBackground.setCornerRadius(dp(activity, 12));
+        cancelBackground.setStroke(dp(activity, 1), Color.rgb(55, 57, 64));
+        cancel.setBackground(cancelBackground);
         cancel.setOnClickListener(v -> rejectActive("已取消 Suno 登录"));
         bar.addView(cancel, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -252,6 +264,9 @@ public class SunoAuthNativePlugin extends Plugin {
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.rgb(9, 10, 12)));
+            window.setStatusBarColor(Color.rgb(9, 10, 12));
+            window.setNavigationBarColor(Color.rgb(9, 10, 12));
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         }
 

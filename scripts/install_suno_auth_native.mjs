@@ -24,6 +24,13 @@ const plugins = [
     importLine: 'import com.sunoapp.downloader.auth.SunoAuthNativePlugin;',
     registerLine: 'registerPlugin(SunoAuthNativePlugin.class);',
   },
+  {
+    label: 'Suno 更新下载原生桥',
+    source: path.join(root, 'native', 'suno-update', 'SunoUpdateNativePlugin.java'),
+    target: path.join(packageDir, 'update', 'SunoUpdateNativePlugin.java'),
+    importLine: 'import com.sunoapp.downloader.update.SunoUpdateNativePlugin;',
+    registerLine: 'registerPlugin(SunoUpdateNativePlugin.class);',
+  },
 ];
 
 function fail(message) {

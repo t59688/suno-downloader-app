@@ -3,7 +3,6 @@
  *  - 解析成功后自动写入「历史」记录
  *  - 音频下载完成后自动加入「播放器」曲库
  *  - 支持从「历史」页发起的再下载（pendingRedownload）
- *  - 精准 LRC：Android 首次点击自动打开 Suno 登录，成功后自动继续；无 Token 输入步骤
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -52,8 +51,8 @@ const FORMATS: { key: DownloadFormat; label: string; desc: string }[] = [
   { key: 'original', label: '原始音频', desc: '解密原生文件' },
   { key: 'mp4', label: 'MP4', desc: '高画质 MV 视频' },
   { key: 'cover', label: '高清封面', desc: '原图无损尺寸' },
-  { key: 'lyrics', label: 'TXT 歌词', desc: '公开页纯文本歌词' },
-  { key: 'lrc', label: 'LRC', desc: '首次自动登录 · 之后一键下载' },
+  { key: 'lyrics', label: 'TXT 歌词', desc: '纯文本歌词' },
+  { key: 'lrc', label: 'LRC', desc: '标准同步时间轴' },
 ];
 
 const AUDIO_FORMATS: DownloadFormat[] = ['mp3', 'wav', 'original'];
@@ -86,7 +85,6 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  /* 历史页发起的再下载：直接复用已解析的数据 */
   useEffect(() => {
     if (!pendingRedownload) return;
     const c = pendingRedownload;
@@ -112,7 +110,6 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
     }
   }
 
-  /** 解析成功 → 写入历史记录 */
   function recordParsed(c: ClipInfo) {
     try {
       upsertRecord(c);
@@ -164,7 +161,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
             /* 忽略 */
           }
         }
-        if (!c) throw new Error('未能解析出歌曲信息，请确认链接是否有效公开');
+        if (!c) throw new Error('未能解析出歌曲信息，请确认链接有效且可访问');
         setClip(c);
         recordParsed(c);
       }
@@ -194,7 +191,6 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
     };
   }
 
-  /** 原生平台：下载完成后自动写入系统媒体库 */
   async function autoSave(r: DownloadResult) {
     if (!isNative) return;
     try {
@@ -207,7 +203,6 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
     }
   }
 
-  /** 音频下载完成 → 自动加入播放器曲库 */
   async function addToLibrary(r: DownloadResult, format: DownloadFormat) {
     if (!AUDIO_FORMATS.includes(format) || !clip) return;
     try {
@@ -364,10 +359,9 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
 
   return (
     <div className="parse-tab">
-      {/* 链接输入卡片 */}
       <section className="card">
         <textarea
-          placeholder="粘贴 Suno 歌曲、Hook 或公开歌单链接…"
+          placeholder="粘贴 Suno 歌曲、Hook 或歌单链接…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={busy}
@@ -390,29 +384,18 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
             type="button"
           >
             {busy ? (
-              <>
-                <span className="spinner" />
-                解析中…
-              </>
+              <><span className="spinner" />解析中…</>
             ) : (
-              <>
-                <Sparkles size={15} strokeWidth={1.8} />
-                解析歌曲
-              </>
+              <><Sparkles size={15} strokeWidth={1.8} />解析歌曲</>
             )}
           </button>
         </div>
       </section>
 
-      {/* 歌曲信息预览卡片 */}
       {clip && (
         <section className="card track-card">
           <div className="track-cover">
-            {clip.image_url ? (
-              <img src={clip.image_url} alt="" />
-            ) : (
-              <Music size={26} strokeWidth={1.8} />
-            )}
+            {clip.image_url ? <img src={clip.image_url} alt="" /> : <Music size={26} strokeWidth={1.8} />}
           </div>
           <div className="track-info">
             <h2 className="track-title">{clip.title || clip.id}</h2>
@@ -422,18 +405,13 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
             </p>
             {tagList.length > 0 && (
               <div className="track-tags">
-                {tagList.slice(0, 4).map((t) => (
-                  <span key={t} className="tag-chip">
-                    {t}
-                  </span>
-                ))}
+                {tagList.slice(0, 4).map((t) => <span key={t} className="tag-chip">{t}</span>)}
               </div>
             )}
           </div>
         </section>
       )}
 
-      {/* 格式下载 Bento Grid */}
       {(phase === 'ready' || phase === 'downloading' || phase === 'done') && clip && (
         <section className="card">
           <div className="formats-grid">
@@ -447,9 +425,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
               >
                 <div className="format-header">
                   <div className="format-ico-box">{FormatIcons[f.key]}</div>
-                  <span className="format-dl-badge">
-                    <Download size={15} strokeWidth={2} />
-                  </span>
+                  <span className="format-dl-badge"><Download size={15} strokeWidth={2} /></span>
                 </div>
                 <div className="format-label">{f.label}</div>
                 <div className="format-desc">
@@ -463,12 +439,6 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
             ))}
           </div>
 
-          {isNative && (
-            <div className="saved-line" style={{ marginBottom: 10 }}>
-              精准 LRC 首次使用会自动打开 Suno 登录；登录成功后自动继续，以后无需复制任何 Token。
-            </div>
-          )}
-
           <button className="btn all-btn full" onClick={handleAll} disabled={busy} type="button">
             {FormatIcons.zip}
             打包全部文件 · ZIP
@@ -476,59 +446,43 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
         </section>
       )}
 
-      {/* 进度提示卡片 */}
       {busy && (
         <section className="card progress-card">
           <div className="progress-top">
-            <span className="progress-label">
-              <span className="spinner" />
-              {stage || '正在处理中…'}
-            </span>
+            <span className="progress-label"><span className="spinner" />{stage || '正在处理中…'}</span>
             <button className="btn btn-quiet mini" onClick={() => abortRef.current?.abort()} type="button">
-              <X size={14} strokeWidth={2} />
-              取消
+              <X size={14} strokeWidth={2} />取消
             </button>
           </div>
           <div className="progress-track">
-            {progress != null && progress >= 0 ? (
-              <div className="progress-fill" style={{ width: Math.max(4, Math.round(progress)) + '%' }} />
-            ) : (
-              <div className="progress-indet" />
-            )}
+            {progress != null && progress >= 0
+              ? <div className="progress-fill" style={{ width: Math.max(4, Math.round(progress)) + '%' }} />
+              : <div className="progress-indet" />}
           </div>
         </section>
       )}
 
-      {/* 错误卡片 */}
       {phase === 'error' && (
         <section className="error-card">
-          <div className="error-ico">
-            <AlertCircle size={20} strokeWidth={2} />
-          </div>
+          <div className="error-ico"><AlertCircle size={20} strokeWidth={2} /></div>
           <div style={{ flex: 1 }}>
             <div className="error-msg">{error}</div>
             <div className="error-actions">
               <button className="btn btn-ghost mini" onClick={reset} type="button">
-                <RotateCcw size={13} strokeWidth={2} />
-                清空重试
+                <RotateCcw size={13} strokeWidth={2} />清空重试
               </button>
             </div>
           </div>
         </section>
       )}
 
-      {/* 完成结果卡片 */}
       {result && phase === 'done' && (
         <section className="card result-card">
           <div className="result-head">
-            <div className="result-check">
-              <Check size={18} strokeWidth={2.4} />
-            </div>
+            <div className="result-check"><Check size={18} strokeWidth={2.4} /></div>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div className="result-title">下载完成</div>
-              <div className="result-file">
-                {result.fileName} · {fmtSize(result.blob.size)}
-              </div>
+              <div className="result-file">{result.fileName} · {fmtSize(result.blob.size)}</div>
             </div>
           </div>
 
@@ -548,20 +502,17 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
           <div className="result-actions">
             {!isNative && (
               <button className="btn btn-primary full" onClick={handleSave} type="button">
-                <HardDriveDownload size={16} strokeWidth={2} />
-                保存到电脑 / 手机
+                <HardDriveDownload size={16} strokeWidth={2} />保存到电脑 / 手机
               </button>
             )}
             {isNative && savedMsg.includes('失败') && (
               <button className="btn btn-danger full" onClick={handleSave} type="button">
-                <HardDriveDownload size={16} strokeWidth={2} />
-                重试保存到设备
+                <HardDriveDownload size={16} strokeWidth={2} />重试保存到设备
               </button>
             )}
             {savedMsg && <div className="saved-line">{savedMsg}</div>}
             <button className="btn btn-quiet full" onClick={reset} type="button">
-              <RotateCcw size={14} strokeWidth={2} />
-              继续解析新歌曲
+              <RotateCcw size={14} strokeWidth={2} />继续解析新歌曲
             </button>
           </div>
         </section>

@@ -2,9 +2,8 @@
  * 历史 Tab：本应用解析记录管理（CRUD）
  *  - 只收录通过本软件解析的歌曲
  *  - 编辑（标题/艺术家/风格标签）、删除、清空、再下载
- *  - 全面集成 Lucide 规范图标与 iOS 原生风格交互
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Search,
   Download,
@@ -23,13 +22,15 @@ import {
   type ParseRecord,
 } from '../core/records';
 import type { ClipInfo } from '../core/types';
+import ConfirmDialog from './ConfirmDialog';
 
 export const RECORDS_CHANGED = 'suno:records-changed';
 
 interface Props {
-  /** 点击"再下载"：切回解析页并自动解析 */
   onRedownload: (clip: ClipInfo) => void;
 }
+
+type ConfirmAction = { kind: 'clear' } | { kind: 'delete'; record: ParseRecord } | null;
 
 function fmtDate(ts: number): string {
   const d = new Date(ts);
@@ -42,6 +43,7 @@ export default function HistoryTab({ onRedownload }: Props) {
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<ParseRecord | null>(null);
   const [draft, setDraft] = useState({ title: '', artist: '', tags: '' });
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
 
   useEffect(() => {
     const fn = () => setRecords(loadRecords());
@@ -78,6 +80,25 @@ export default function HistoryTab({ onRedownload }: Props) {
     setEditing(null);
   }
 
+  const closeConfirm = useCallback(() => setConfirmAction(null), []);
+
+  function applyConfirm() {
+    if (!confirmAction) return;
+    if (confirmAction.kind === 'clear') {
+      setRecords(clearRecords());
+    } else {
+      setRecords(deleteRecord(confirmAction.record.id));
+    }
+    setConfirmAction(null);
+  }
+
+  const confirmTitle = confirmAction?.kind === 'clear' ? '清空解析记录？' : '删除这条记录？';
+  const confirmMessage = confirmAction?.kind === 'clear'
+    ? '解析历史会被清空，已经保存到设备的文件不会受到影响。'
+    : confirmAction?.kind === 'delete'
+      ? `「${confirmAction.record.title}」将从解析历史中移除。`
+      : '';
+
   return (
     <div className="history-tab">
       <div className="hist-head">
@@ -87,11 +108,7 @@ export default function HistoryTab({ onRedownload }: Props) {
         {records.length > 0 && (
           <button
             className="btn btn-quiet mini danger"
-            onClick={() => {
-              if (window.confirm('确定清空全部解析记录？（不影响已保存的文件）')) {
-                setRecords(clearRecords());
-              }
-            }}
+            onClick={() => setConfirmAction({ kind: 'clear' })}
             type="button"
           >
             <Trash2 size={13} strokeWidth={2} />
@@ -115,8 +132,8 @@ export default function HistoryTab({ onRedownload }: Props) {
       {records.length === 0 ? (
         <div className="hist-empty">
           <Clock size={40} strokeWidth={1.5} />
-          <p>暂无解析历史记录</p>
-          <span>在「解析」页输入或粘贴链接，解析后的记录会自动汇总在此</span>
+          <p>暂无解析记录</p>
+          <span>解析过的歌曲会自动汇总在这里。</span>
         </div>
       ) : (
         <ul className="hist-list">
@@ -155,9 +172,7 @@ export default function HistoryTab({ onRedownload }: Props) {
                 <button
                   className="btn btn-quiet mini danger"
                   title="删除"
-                  onClick={() => {
-                    if (window.confirm(`确认删除「${r.title}」的记录？`)) setRecords(deleteRecord(r.id));
-                  }}
+                  onClick={() => setConfirmAction({ kind: 'delete', record: r })}
                   type="button"
                 >
                   <Trash2 size={13} strokeWidth={2} />
@@ -169,11 +184,16 @@ export default function HistoryTab({ onRedownload }: Props) {
         </ul>
       )}
 
-      {/* 编辑弹窗 */}
       {editing && (
-        <div className="modal-mask" onClick={() => setEditing(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">编辑记录信息</div>
+        <div className="modal-mask" role="presentation" onMouseDown={() => setEditing(null)}>
+          <section
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-edit-title"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div id="history-edit-title" className="modal-title">编辑记录信息</div>
             <label className="field">
               <span>歌曲标题</span>
               <input
@@ -208,9 +228,19 @@ export default function HistoryTab({ onRedownload }: Props) {
                 保存
               </button>
             </div>
-          </div>
+          </section>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmAction != null}
+        title={confirmTitle}
+        message={confirmMessage}
+        confirmLabel={confirmAction?.kind === 'clear' ? '清空记录' : '删除记录'}
+        danger
+        onCancel={closeConfirm}
+        onConfirm={applyConfirm}
+      />
     </div>
   );
 }
