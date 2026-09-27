@@ -1,8 +1,35 @@
-import { registerPlugin } from '@capacitor/core';
+import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 
 export interface NativeHttpResponse {
   status: number;
   body: string;
+}
+
+export type MediaControlAction =
+  | 'play'
+  | 'pause'
+  | 'toggle'
+  | 'stop'
+  | 'next'
+  | 'previous'
+  | 'seekTo'
+  | 'seekForward'
+  | 'seekBackward';
+
+export interface MediaControlEvent {
+  action: MediaControlAction;
+  /** seekTo 的目标位置，单位秒 */
+  position?: number;
+}
+
+export interface MediaSessionOptions {
+  title: string;
+  artist: string;
+  artworkUrl?: string;
+  duration: number;
+  position: number;
+  playing: boolean;
+  playbackRate: number;
 }
 
 export interface SunoNativePlugin {
@@ -46,6 +73,15 @@ export interface SunoNativePlugin {
   }): Promise<void>;
   /** 读取系统剪贴板文本内容 */
   getClipboard(): Promise<{ text: string }>;
+  /** 将当前 WebView 播放状态同步到 Android MediaSession。 */
+  mediaSessionUpdate(options: MediaSessionOptions): Promise<void>;
+  /** 当前没有可播放歌曲时关闭系统媒体会话与播放通知。 */
+  mediaSessionClear(): Promise<void>;
+  /** 接收锁屏、系统媒体面板、耳机与蓝牙设备的播放命令。 */
+  addListener(
+    eventName: 'mediaControl',
+    listenerFunc: (event: MediaControlEvent) => void,
+  ): Promise<PluginListenerHandle>;
 }
 
 /**

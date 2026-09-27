@@ -1,21 +1,31 @@
 package com.sunoapp.downloader.core;
 
 import android.Manifest;
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.media.MediaMetadata;
 import android.media.MediaScannerConnection;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.view.KeyEvent;
 
 import androidx.core.app.NotificationCompat;
 
@@ -64,6 +74,10 @@ public class SunoNativePlugin extends Plugin {
     private static final String RIGHTS_ORIGIN = "https://usesuno.com";
     private static final String CHANNEL_ID = "suno_downloads";
     private static final int NOTIFICATION_ID = 41001;
+    private static final String MEDIA_CHANNEL_ID = "suno_playback";
+    private static final int MEDIA_NOTIFICATION_ID = 41002;
+    private static final String ACTION_MEDIA_COMMAND = "com.sunoapp.downloader.MEDIA_COMMAND";
+    private static final String EXTRA_MEDIA_COMMAND = "command";
     private static final int CONNECT_TIMEOUT_MS = 15_000;
     private static final int READ_TIMEOUT_MS = 30_000;
 
@@ -72,15 +86,34 @@ public class SunoNativePlugin extends Plugin {
     private final Map<String, SaveSession> saveSessions = new ConcurrentHashMap<>();
     private volatile String notificationTitle = "Suno Downloader";
     private volatile boolean destroyed;
+    private MediaSession mediaSession;
+    private BroadcastReceiver mediaCommandReceiver;
+    private boolean mediaNotificationPosted;
+    private boolean mediaPlaying;
+    private String mediaTitle = "Suno Downloader";
+    private String mediaArtist = "Suno AI";
+    private String mediaArtworkUrl = "";
+    private long mediaPositionMs;
+    private long mediaDurationMs;
+    private float mediaPlaybackRate = 1f;
 
     @Override
     public void load() {
         ensureNotificationChannel();
+        ensureMediaNotificationChannel();
+        registerMediaCommandReceiver();
+        ensureMediaSession();
     }
 
     @Override
     protected void handleOnDestroy() {
         destroyed = true;
+        clearMediaSessionInternal();
+        unregisterMediaCommandReceiver();
+        if (mediaSession != null) {
+            mediaSession.release();
+            mediaSession = null;
+        }
         for (SaveSession session : saveSessions.values()) {
             abortSession(session);
         }
@@ -289,6 +322,401 @@ public class SunoNativePlugin extends Plugin {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
             || getPermissionState("notifications") == PermissionState.GRANTED;
     }
+
+    /* ---------- Android media session / Bluetooth / lock-screen controls ---------- */
+
+    @PluginMethod
+    public void mediaSessionUpdate(PluginCall call) {
+        ensureMediaSession();
+
+        String title = nonBlank(call.getString("title"), "未知歌曲");
+        String artist = nonBlank(call.getString("artist"), "Suno AI");
+        String artworkUrl = nonBlank(call.getString("artworkUrl"), "");
+        Boolean playingValue = call.getBoolean("playing");
+        Double durationValue = call.getDouble("duration");
+        Double positionValue = call.getDouble("position");
+        Double playbackRateValue = call.getDouble("playbackRate");
+
+        boolean playing = Boolean.TRUE.equals(playingValue);
+        long durationMs = secondsToMillis(durationValue);
+        long positionMs = secondsToMillis(positionValue);
+        float playbackRate = playbackRateValue == null || !Double.isFinite(playbackRateValue)
+            ? 1f
+            : (float) Math.max(0.1d, Math.min(4d, playbackRateValue));
+
+        boolean refreshNotification = !mediaNotificationPosted
+            || mediaPlaying != playing
+            || !mediaTitle.equals(title)
+            || !mediaArtist.equals(artist)
+            || !mediaArtworkUrl.equals(artworkUrl);
+
+        mediaPlaying = playing;
+        mediaTitle = title;
+        mediaArtist = artist;
+        mediaArtworkUrl = artworkUrl;
+        mediaDurationMs = durationMs;
+        mediaPositionMs = Math.min(positionMs, durationMs > 0 ? durationMs : positionMs);
+        mediaPlaybackRate = playbackRate;
+
+        MediaMetadata.Builder metadata = new MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, mediaTitle)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, mediaArtist)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, mediaTitle)
+            .putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, mediaArtist);
+
+        if (mediaDurationMs > 0) {
+            metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, mediaDurationMs);
+        }
+        if (isHttpUrl(mediaArtworkUrl)) {
+            metadata.putString(MediaMetadata.METADATA_KEY_ART_URI, mediaArtworkUrl);
+            metadata.putString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI, mediaArtworkUrl);
+        }
+
+        mediaSession.setMetadata(metadata.build());
+        updateMediaPlaybackState();
+        mediaSession.setActive(true);
+
+        if (refreshNotification) {
+            showMediaNotification();
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void mediaSessionClear(PluginCall call) {
+        clearMediaSessionInternal();
+        call.resolve();
+    }
+
+    private void ensureMediaSession() {
+        if (mediaSession != null) return;
+
+        mediaSession = new MediaSession(getContext(), "SunoDownloaderPlayback");
+        mediaSession.setFlags(
+            MediaSession.FLAG_HANDLES_MEDIA_BUTTONS
+                | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
+        );
+        mediaSession.setCallback(new MediaSession.Callback() {
+            @Override
+            public void onPlay() {
+                emitMediaControl("play", null);
+            }
+
+            @Override
+            public void onPause() {
+                emitMediaControl("pause", null);
+            }
+
+            @Override
+            public void onStop() {
+                emitMediaControl("stop", null);
+            }
+
+            @Override
+            public void onSkipToNext() {
+                emitMediaControl("next", null);
+            }
+
+            @Override
+            public void onSkipToPrevious() {
+                emitMediaControl("previous", null);
+            }
+
+            @Override
+            public void onSeekTo(long pos) {
+                emitMediaControl("seekTo", Math.max(0L, pos));
+            }
+
+            @Override
+            public void onFastForward() {
+                emitMediaControl("seekForward", null);
+            }
+
+            @Override
+            public void onRewind() {
+                emitMediaControl("seekBackward", null);
+            }
+
+            @Override
+            public boolean onMediaButtonEvent(Intent mediaButtonIntent) {
+                KeyEvent event = mediaButtonIntent == null
+                    ? null
+                    : mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
+                if (event == null || event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() != 0) {
+                    return super.onMediaButtonEvent(mediaButtonIntent);
+                }
+                switch (event.getKeyCode()) {
+                    case KeyEvent.KEYCODE_MEDIA_PLAY:
+                        emitMediaControl("play", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                        emitMediaControl("pause", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                    case KeyEvent.KEYCODE_HEADSETHOOK:
+                        emitMediaControl("toggle", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_NEXT:
+                        emitMediaControl("next", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                        emitMediaControl("previous", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                        emitMediaControl("seekForward", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_REWIND:
+                        emitMediaControl("seekBackward", null);
+                        return true;
+                    case KeyEvent.KEYCODE_MEDIA_STOP:
+                        emitMediaControl("stop", null);
+                        return true;
+                    default:
+                        return super.onMediaButtonEvent(mediaButtonIntent);
+                }
+            }
+        }, main);
+
+        PendingIntent sessionActivity = appLaunchPendingIntent();
+        if (sessionActivity != null) {
+            mediaSession.setSessionActivity(sessionActivity);
+        }
+        updateMediaPlaybackState();
+    }
+
+    private void updateMediaPlaybackState() {
+        if (mediaSession == null) return;
+
+        long actions = PlaybackState.ACTION_PLAY
+            | PlaybackState.ACTION_PAUSE
+            | PlaybackState.ACTION_PLAY_PAUSE
+            | PlaybackState.ACTION_SKIP_TO_PREVIOUS
+            | PlaybackState.ACTION_SKIP_TO_NEXT
+            | PlaybackState.ACTION_SEEK_TO
+            | PlaybackState.ACTION_FAST_FORWARD
+            | PlaybackState.ACTION_REWIND
+            | PlaybackState.ACTION_STOP;
+
+        int state = mediaPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
+        float playbackSpeed = mediaPlaying ? mediaPlaybackRate : 0f;
+        PlaybackState playbackState = new PlaybackState.Builder()
+            .setActions(actions)
+            .setState(
+                state,
+                Math.max(0L, mediaPositionMs),
+                playbackSpeed,
+                SystemClock.elapsedRealtime()
+            )
+            .build();
+        mediaSession.setPlaybackState(playbackState);
+    }
+
+    private void clearMediaSessionInternal() {
+        mediaNotificationPosted = false;
+        mediaPlaying = false;
+        mediaPositionMs = 0L;
+        mediaDurationMs = 0L;
+        if (mediaSession != null) {
+            mediaSession.setPlaybackState(
+                new PlaybackState.Builder()
+                    .setState(PlaybackState.STATE_NONE, 0L, 0f)
+                    .build()
+            );
+            mediaSession.setActive(false);
+        }
+        try {
+            notificationManager().cancel(MEDIA_NOTIFICATION_ID);
+        } catch (Exception ignored) {}
+    }
+
+    private void registerMediaCommandReceiver() {
+        if (mediaCommandReceiver != null) return;
+
+        mediaCommandReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null || !ACTION_MEDIA_COMMAND.equals(intent.getAction())) return;
+                String command = intent.getStringExtra(EXTRA_MEDIA_COMMAND);
+                if (isMediaCommand(command)) {
+                    emitMediaControl(command, null);
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter(ACTION_MEDIA_COMMAND);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getContext().registerReceiver(
+                mediaCommandReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            );
+        } else {
+            getContext().registerReceiver(mediaCommandReceiver, filter);
+        }
+    }
+
+    private void unregisterMediaCommandReceiver() {
+        if (mediaCommandReceiver == null) return;
+        try {
+            getContext().unregisterReceiver(mediaCommandReceiver);
+        } catch (Exception ignored) {
+            // Receiver may already have been detached during Activity teardown.
+        }
+        mediaCommandReceiver = null;
+    }
+
+    private void emitMediaControl(String action, Long positionMs) {
+        Runnable notify = () -> {
+            if (destroyed) return;
+            JSObject data = new JSObject();
+            data.put("action", action);
+            if (positionMs != null) {
+                data.put("position", Math.max(0L, positionMs) / 1000.0d);
+            }
+            notifyListeners("mediaControl", data);
+        };
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            notify.run();
+        } else {
+            main.post(notify);
+        }
+    }
+
+    private PendingIntent mediaCommandPendingIntent(String command, int requestCode) {
+        Intent intent = new Intent(ACTION_MEDIA_COMMAND)
+            .setPackage(getContext().getPackageName())
+            .putExtra(EXTRA_MEDIA_COMMAND, command);
+        return PendingIntent.getBroadcast(
+            getContext(),
+            requestCode,
+            intent,
+            pendingIntentFlags()
+        );
+    }
+
+    private PendingIntent appLaunchPendingIntent() {
+        Intent launchIntent = getContext()
+            .getPackageManager()
+            .getLaunchIntentForPackage(getContext().getPackageName());
+        if (launchIntent == null) return null;
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        return PendingIntent.getActivity(
+            getContext(),
+            42000,
+            launchIntent,
+            pendingIntentFlags()
+        );
+    }
+
+    private int pendingIntentFlags() {
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        return flags;
+    }
+
+    private void showMediaNotification() {
+        if (mediaSession == null || !mediaSession.isActive()) return;
+        ensureMediaNotificationChannel();
+
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(getContext(), MEDIA_CHANNEL_ID)
+            : new Notification.Builder(getContext());
+
+        builder
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(mediaTitle)
+            .setContentText(mediaArtist)
+            .setCategory(Notification.CATEGORY_TRANSPORT)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setShowWhen(false)
+            .setOnlyAlertOnce(true)
+            .setOngoing(mediaPlaying)
+            .addAction(
+                android.R.drawable.ic_media_previous,
+                "上一首",
+                mediaCommandPendingIntent("previous", 42001)
+            )
+            .addAction(
+                mediaPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                mediaPlaying ? "暂停" : "播放",
+                mediaCommandPendingIntent("toggle", 42002)
+            )
+            .addAction(
+                android.R.drawable.ic_media_next,
+                "下一首",
+                mediaCommandPendingIntent("next", 42003)
+            )
+            .setStyle(
+                new Notification.MediaStyle()
+                    .setMediaSession(mediaSession.getSessionToken())
+                    .setShowActionsInCompactView(0, 1, 2)
+            );
+
+        PendingIntent contentIntent = appLaunchPendingIntent();
+        if (contentIntent != null) {
+            builder.setContentIntent(contentIntent);
+        }
+
+        try {
+            notificationManager().notify(MEDIA_NOTIFICATION_ID, builder.build());
+            mediaNotificationPosted = true;
+        } catch (SecurityException ignored) {
+            // MediaSession remains usable even if the OS suppresses app notifications.
+            mediaNotificationPosted = false;
+        }
+    }
+
+    private void ensureMediaNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationChannel channel = new NotificationChannel(
+            MEDIA_CHANNEL_ID,
+            "Suno 播放控制",
+            NotificationManager.IMPORTANCE_LOW
+        );
+        channel.setDescription("锁屏、系统媒体面板与蓝牙播放控制");
+        channel.setShowBadge(false);
+        channel.setSound(null, null);
+        notificationManager().createNotificationChannel(channel);
+    }
+
+    private static long secondsToMillis(Double value) {
+        if (value == null || !Double.isFinite(value) || value <= 0d) return 0L;
+        double millis = value * 1000d;
+        if (millis >= Long.MAX_VALUE) return Long.MAX_VALUE;
+        return (long) millis;
+    }
+
+    private static String nonBlank(String value, String fallback) {
+        if (value == null) return fallback;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? fallback : trimmed;
+    }
+
+    private static boolean isHttpUrl(String value) {
+        if (value == null) return false;
+        return value.startsWith("https://") || value.startsWith("http://");
+    }
+
+    private static boolean isMediaCommand(String command) {
+        if (command == null) return false;
+        switch (command) {
+            case "play":
+            case "pause":
+            case "toggle":
+            case "stop":
+            case "next":
+            case "previous":
+            case "seekForward":
+            case "seekBackward":
+                return true;
+            default:
+                return false;
+        }
+    }
+
 
     @PluginMethod
     public void saveFile(PluginCall call) {

@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Disc3, Play, Pause } from 'lucide-react';
+import { usePlayer } from './PlayerContext';
 
 interface Props {
   src: string;
   title?: string;
   artist?: string;
   cover?: string;
+  /** 下载完成后已入库的歌曲 ID。存在时直接复用全局播放器，避免双播放器。 */
+  trackId?: string;
 }
 
 function fmtTime(t: number): string {
@@ -16,20 +19,33 @@ function fmtTime(t: number): string {
 }
 
 /**
- * 自定义音频播放器：
- * 旋转唱片封面 + 极简声学细进度条 + 播放/暂停
+ * 下载完成页的试听 UI。
+ * 音频正常入库后复用 PlayerContext 的单一 audio 引擎，因此 Android MediaSession、
+ * 蓝牙/耳机按键与播放器 Tab 始终控制同一份播放状态。
+ * IndexedDB 入库失败时才退回当前 result Blob 的本地 <audio> 预览。
  */
-export default function AudioPlayer({ src, title, artist, cover }: Props) {
+export default function AudioPlayer({ src, title, artist, cover, trackId }: Props) {
+  const player = usePlayer();
   const audioRef = useRef<HTMLAudioElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [time, setTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [localPlaying, setLocalPlaying] = useState(false);
+  const [localTime, setLocalTime] = useState(0);
+  const [localDuration, setLocalDuration] = useState(0);
   const [seeking, setSeeking] = useState(false);
+
+  const globalActive = Boolean(trackId && player.currentId === trackId);
+  const playing = trackId ? globalActive && player.playing : localPlaying;
+  const time = trackId ? (globalActive ? player.time : 0) : localTime;
+  const duration = trackId ? (globalActive ? player.duration : 0) : localDuration;
 
   useEffect(() => () => audioRef.current?.pause(), []);
 
   async function toggle() {
+    if (trackId) {
+      if (globalActive) player.toggle();
+      else player.play(trackId);
+      return;
+    }
     const a = audioRef.current;
     if (!a) return;
     if (a.paused) {
@@ -46,23 +62,33 @@ export default function AudioPlayer({ src, title, artist, cover }: Props) {
     return Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
   }
 
+  function previewSeek(t: number) {
+    if (trackId && globalActive) player.seek(t);
+    else setLocalTime(t);
+  }
+
   function onPointerDown(e: React.PointerEvent) {
-    const a = audioRef.current;
-    if (!a || !duration) return;
+    if (!duration) return;
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     setSeeking(true);
-    setTime(posFromEvent(e) * duration);
+    previewSeek(posFromEvent(e) * duration);
   }
 
   function onPointerMove(e: React.PointerEvent) {
     if (!seeking || !duration) return;
-    setTime(posFromEvent(e) * duration);
+    previewSeek(posFromEvent(e) * duration);
   }
 
   function onPointerUp(e: React.PointerEvent) {
-    const a = audioRef.current;
-    if (!a || !duration) return;
-    a.currentTime = posFromEvent(e) * duration;
+    if (!duration) return;
+    const target = posFromEvent(e) * duration;
+    if (trackId && globalActive) {
+      player.seek(target);
+    } else {
+      const a = audioRef.current;
+      if (a) a.currentTime = target;
+      setLocalTime(target);
+    }
     setSeeking(false);
   }
 
@@ -70,18 +96,20 @@ export default function AudioPlayer({ src, title, artist, cover }: Props) {
 
   return (
     <div className="player">
-      <audio
-        ref={audioRef}
-        src={src}
-        preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onTimeUpdate={(e) => {
-          if (!seeking) setTime(e.currentTarget.currentTime);
-        }}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-      />
+      {!trackId && (
+        <audio
+          ref={audioRef}
+          src={src}
+          preload="metadata"
+          onPlay={() => setLocalPlaying(true)}
+          onPause={() => setLocalPlaying(false)}
+          onEnded={() => setLocalPlaying(false)}
+          onTimeUpdate={(e) => {
+            if (!seeking) setLocalTime(e.currentTarget.currentTime);
+          }}
+          onLoadedMetadata={(e) => setLocalDuration(e.currentTarget.duration)}
+        />
+      )}
       <div className="player-row">
         <div className={'player-disc' + (playing ? ' spinning' : '')}>
           {cover ? (

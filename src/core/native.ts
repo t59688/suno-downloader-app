@@ -1,5 +1,9 @@
 import { Capacitor } from '@capacitor/core';
-import { SunoNative } from '../../plugins/suno-native/src/plugin';
+import {
+  SunoNative,
+  type MediaControlEvent,
+  type MediaSessionOptions,
+} from '../../plugins/suno-native/src/plugin';
 
 /** 是否原生平台（Android/iOS）——Web 端全部自动降级为 no-op */
 export const isNative = Capacitor.isNativePlatform();
@@ -23,6 +27,26 @@ export const notifyComplete = (text: string) =>
 export const notifyFail = (message: string) => safe(() => SunoNative.notifyFail({ message }));
 
 export const notifyCancel = () => safe(() => SunoNative.notifyCancel());
+
+/* ---------- Android 系统媒体控制 ---------- */
+
+export type { MediaControlEvent, MediaSessionOptions };
+
+export const syncMediaSession = (state: MediaSessionOptions) =>
+  safe(() => SunoNative.mediaSessionUpdate(state));
+
+export const clearMediaSession = () => safe(() => SunoNative.mediaSessionClear());
+
+export async function addMediaControlListener(
+  listener: (event: MediaControlEvent) => void,
+) {
+  if (!isNative) return null;
+  try {
+    return await SunoNative.addListener('mediaControl', listener);
+  } catch {
+    return null;
+  }
+}
 
 /* ---------- 保存到本地媒体库 ---------- */
 

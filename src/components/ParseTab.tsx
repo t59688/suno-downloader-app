@@ -78,6 +78,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
   const [error, setError] = useState('');
   const [result, setResult] = useState<DownloadResult | null>(null);
   const [resultUrl, setResultUrl] = useState('');
+  const [resultTrackId, setResultTrackId] = useState<string | null>(null);
   const [savedMsg, setSavedMsg] = useState('');
   const [pasteTip, setPasteTip] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -102,6 +103,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
 
   function resetResult() {
     setResult(null);
+    setResultTrackId(null);
     setSavedMsg('');
     setProgress(null);
     if (resultUrl) {
@@ -203,10 +205,13 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
     }
   }
 
-  async function addToLibrary(r: DownloadResult, format: DownloadFormat) {
-    if (!AUDIO_FORMATS.includes(format) || !clip) return;
+  async function addToLibrary(
+    r: DownloadResult,
+    format: DownloadFormat,
+  ): Promise<string | null> {
+    if (!AUDIO_FORMATS.includes(format) || !clip) return null;
     try {
-      await player.addTrack({
+      const meta = await player.addTrack({
         clipId: clip.id,
         title: clip.title || clip.id,
         artist: clip.display_name || clip.handle || 'Suno AI',
@@ -217,8 +222,10 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
         format,
       });
       setSavedMsg((m) => (m ? m + ' · ' : '') + '已入库播放器');
+      return meta.id;
     } catch {
-      /* 入库失败不阻断 */
+      /* 入库失败不阻断，试听退回 result Blob 本地播放器 */
+      return null;
     }
   }
 
@@ -228,6 +235,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
     setError('');
     setSavedMsg('');
     setProgress(null);
+    setResultTrackId(null);
     lastNotifPct.current = -1;
     notifyStart(
       clip.title || 'Suno 歌曲',
@@ -245,7 +253,8 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
       setResultUrl(URL.createObjectURL(r.blob));
       setStage('正在保存至系统媒体库…');
       await autoSave(r);
-      await addToLibrary(r, format);
+      const trackId = await addToLibrary(r, format);
+      setResultTrackId(trackId);
       setPhase('done');
       setStage('完成');
     } catch (e: any) {
@@ -267,6 +276,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
     setError('');
     setSavedMsg('');
     setProgress(null);
+    setResultTrackId(null);
     lastNotifPct.current = -1;
     notifyStart(clip.title || 'Suno 歌曲', '全部文件（ZIP）· 下载中');
     const ac = new AbortController();
@@ -490,6 +500,7 @@ export default function ParseTab({ pendingRedownload, onConsumedRedownload }: Pr
             {isAudio && (
               <AudioPlayer
                 src={resultUrl}
+                trackId={resultTrackId || undefined}
                 title={clip?.title}
                 artist={clip?.display_name || clip?.handle}
                 cover={clip?.image_url}

@@ -50,4 +50,19 @@ for (const relativePath of [
   if (!existsSync(path.join(androidMain, relativePath))) fail(`缺少品牌资源: ${relativePath}`);
 }
 
-console.log('✅ Android shell regression gate passed: immersive system bars + branded launcher icon');
+const nativePlugin = read('java/com/sunoapp/downloader/core/SunoNativePlugin.java');
+for (const required of [
+  'new MediaSession(getContext(), "SunoDownloaderPlayback")',
+  'PlaybackState.ACTION_PLAY_PAUSE',
+  'PlaybackState.ACTION_SKIP_TO_PREVIOUS',
+  'PlaybackState.ACTION_SKIP_TO_NEXT',
+  'PlaybackState.ACTION_SEEK_TO',
+  'notifyListeners("mediaControl", data)',
+  'public void mediaSessionUpdate(PluginCall call)',
+]) {
+  requireText(nativePlugin, required, 'SunoNativePlugin');
+}
+
+console.log(
+  '✅ Android shell regression gate passed: immersive system bars + branded launcher icon + native media session',
+);
