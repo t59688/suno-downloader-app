@@ -21,6 +21,11 @@ import {
   removeTrack as libRemoveTrack,
   type TrackMeta,
 } from '../core/library';
+import {
+  addMediaControlListener,
+  clearMediaSession,
+  syncMediaSession,
+} from '../core/native';
 
 export type LoopMode = 'off' | 'one' | 'all';
 
@@ -111,11 +116,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const a = getAudio();
       const blob = await getTrackBlob(id);
       if (!blob) return;
+      a.pause();
       revoke();
       const url = URL.createObjectURL(blob);
       urlRef.current = url;
       setCurrentId(id);
       setLoading(true);
+      setTime(0);
+      setDuration(0);
       a.src = url;
       a.playbackRate = speed;
       a.play()
@@ -169,6 +177,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const a = getAudio();
     if (a.currentTime > 3) {
       a.currentTime = 0;
+      setTime(0);
       return;
     }
     const { tracks, currentId } = stateRef.current;
@@ -177,6 +186,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const p = cur <= 0 ? tracks.length - 1 : cur - 1;
     void playRef.current(tracks[p].id);
   }, [getAudio, indexOf]);
+  const prevRef = useRef(prev);
+  prevRef.current = prev;
 
   /* 初始化 audio 事件 */
   useEffect(() => {
@@ -219,6 +230,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     },
     [getAudio],
   );
+  const seekRef = useRef(seek);
+  seekRef.current = seek;
 
   const toggle = useCallback(() => {
     const a = getAudio();
@@ -230,6 +243,62 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (a.paused) void a.play().catch(() => undefined);
     else a.pause();
   }, [getAudio, currentId]);
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+
+  /* Android 锁屏 / 系统媒体面板 / 蓝牙耳机命令统一回到同一个 HTMLAudioElement。 */
+  useEffect(() => {
+    let disposed = false;
+    let removeListener: (() => Promise<void>) | null = null;
+
+    void addMediaControlListener((event) => {
+      const a = getAudio();
+      switch (event.action) {
+        case 'play': {
+          const { currentId: activeId, tracks: currentTracks } = stateRef.current;
+          if (activeId) void a.play().catch(() => undefined);
+          else if (currentTracks.length) void playRef.current(currentTracks[0].id);
+          break;
+        }
+        case 'pause':
+          a.pause();
+          break;
+        case 'toggle':
+          toggleRef.current();
+          break;
+        case 'stop':
+          a.pause();
+          seekRef.current(0);
+          break;
+        case 'next':
+          nextRef.current(false);
+          break;
+        case 'previous':
+          prevRef.current();
+          break;
+        case 'seekTo':
+          if (typeof event.position === 'number' && Number.isFinite(event.position)) {
+            seekRef.current(event.position);
+          }
+          break;
+        case 'seekForward':
+          seekRef.current(a.currentTime + 10);
+          break;
+        case 'seekBackward':
+          seekRef.current(a.currentTime - 10);
+          break;
+      }
+    }).then((handle) => {
+      if (!handle) return;
+      if (disposed) void handle.remove();
+      else removeListener = () => handle.remove();
+    });
+
+    return () => {
+      disposed = true;
+      if (removeListener) void removeListener();
+    };
+  }, [getAudio]);
 
   const playAll = useCallback(() => {
     const { tracks } = stateRef.current;
@@ -299,6 +368,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const current = useMemo(
     () => tracks.find((t) => t.id === currentId) || null,
     [tracks, currentId],
+  );
+
+  /* PlaybackState 会按速度自行推进位置；每秒校准一次，避免高频桥调用。 */
+  const mediaPosition = Math.max(0, Math.floor(time));
+  useEffect(() => {
+    if (!current) {
+      void clearMediaSession();
+      return;
+    }
+    void syncMediaSession({
+      title: current.title || '未知歌曲',
+      artist: current.artist || 'Suno AI',
+      artworkUrl: current.cover,
+      duration,
+      position: mediaPosition,
+      playing,
+      playbackRate: speed,
+    });
+  }, [current, duration, mediaPosition, playing, speed]);
+
+  useEffect(
+    () => () => {
+      void clearMediaSession();
+    },
+    [],
   );
 
   const value: PlayerContextValue = {
